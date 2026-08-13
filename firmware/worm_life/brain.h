@@ -20,6 +20,11 @@
 #include "connectome.h"
 
 // ---- tunables ------------------------------------------------------------
+// brain step period in ms: 4 ms (250 Hz). One full connectome step overruns
+// a 1 ms budget on the ESP32 (starves IDLE0 -> task watchdog); even 2 ms was
+// tight. We run the ODE at dt = 4 ms, scaled Euler increment, and rely on
+// packed edge arrays + -O2 -ffast-math to keep ~2 worms under budget.
+#define BRAIN_DT_MS 4
 #define K_GAP       0.05f    // gap junction coupling scale
 
 // Runtime-tunable brain parameters (set before brain_init; defaults inside).
@@ -44,7 +49,7 @@ typedef struct {
 } Brain;
 
 void brain_init(Brain* b, uint32_t seed);
-void brain_step(Brain* b);                       // advance one ms
+void brain_step(Brain* b);                       // advance BRAIN_DT_MS ms
 uint32_t brain_last_step_us(void);               // us in most recent step
 void brain_inject(Brain* b, int node, float amp);
 float brain_rate(const Brain* b, int node);      // == activity

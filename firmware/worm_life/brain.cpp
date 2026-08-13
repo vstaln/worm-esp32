@@ -1,9 +1,33 @@
 // brain.cpp — graded-potential network over the full C. elegans connectome.
+// The hot loops below dominate the whole simulation's CPU budget; force
+// aggressive optimisation on THIS translation unit only (the rest of the
+// sketch stays at the platform default), so builds stay fast.
+#pragma GCC optimize("O2", "fast")
+
 #include "brain.h"
 
 #include <esp_timer.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
+
+// brain step period in ms is BRAIN_DT_MS (see brain.h).
+
+// fast sigmoid: 256-entry LUT over x in [-8, 8] + linear interpolation
+// (~5 cycles vs ~100+ for libm expf) — the hot loop's biggest win.
+#define SIG_LUT_N    256
+#define SIG_X_MIN    (-8.0f)
+#define SIG_X_MAX    (8.0f)
+static float g_sig_lut[SIG_LUT_N + 1];
+
+static inline float fast_sigmoid(float x) {
+    if (x <= SIG_X_MIN) return 0.000335f;
+    if (x >= SIG_X_MAX) return 0.999665f;
+    float t = (x - SIG_X_MIN) * (SIG_LUT_N / (SIG_X_MAX - SIG_X_MIN));
+    int i = (int)t;
+    float frac = t - (float)i;
+    return g_sig_lut[i] + frac * (g_sig_lut[i + 1] - g_sig_lut[i]);
+}
 
 // ---- defaults ------------------------------------------------------------
 #define GAIN_DEF   4.0f
@@ -17,8 +41,14 @@
 // per-node chemical output sign (+1 excitatory / -1 inhibitory)
 static int8_t sign[N_NODES];
 
-// per-edge effective chemical weight (fan-in normalised), computed once
-static float chem_w[N_EDGES_CHEM];
+// packed edge arrays: single contiguous stream in RAM (built once at init).
+// The raw SynEdge lives in flash; we repack with the fan-in-normalised float
+// weight so the hot loop reads one 8-byte struct per edge (no separate
+// weight array, no branch). ~58 KB total, fits in the ~270 KB free SRAM.
+typedef struct { uint16_t src, dst; float w; } PackedEdge;
+static PackedEdge* g_chem = NULL;   // N_EDGES_CHEM entries
+static PackedEdge* g_gap = NULL;    // N_EDGES_GAP entries
+
 // per-neuron time constants (ms) and muscle flag
 static float tau_ms[N_NODES];
 static bool is_muscle[N_NODES];
@@ -44,6 +74,11 @@ int node_index_by_name(const char* name) {
 void brain_init(Brain* b, uint32_t seed) {
     static bool tables_ready = false;
     if (!tables_ready) {
+        // build the sigmoid LUT (one-time, single-threaded during setup)
+        for (int i = 0; i <= SIG_LUT_N; i++) {
+            float x = SIG_X_MIN + (SIG_X_MAX - SIG_X_MIN) * (float)i / (float)SIG_LUT_N;
+            g_sig_lut[i] = 1.0f / (1.0f + expf(-x));
+        }
         for (int i = 0; i < N_NODES; i++) {
             is_muscle[i] = (node_meta[i].cls != NODE_NEURON);
             tau_ms[i] = is_muscle[i] ? g_p.tau_muscle : g_p.tau_neuron;
@@ -55,10 +90,20 @@ void brain_init(Brain* b, uint32_t seed) {
         memset(total_in, 0, sizeof(total_in));
         for (int e = 0; e < N_EDGES_CHEM; e++)
             total_in[chem_edges[e].dst] += chem_edges[e].w;
+        g_chem = (PackedEdge*)malloc(N_EDGES_CHEM * sizeof(PackedEdge));
         for (int e = 0; e < N_EDGES_CHEM; e++) {
             const SynEdge* ed = &chem_edges[e];
-            float norm = (float)ed->w / (float)(total_in[ed->dst] ? total_in[ed->dst] : 1);
-            chem_w[e] = norm * (float)sign[ed->src];
+            float norm = (float)ed->w /
+                         (float)(total_in[ed->dst] ? total_in[ed->dst] : 1);
+            g_chem[e].src = ed->src;
+            g_chem[e].dst = ed->dst;
+            g_chem[e].w = norm * (float)sign[ed->src];
+        }
+        g_gap = (PackedEdge*)malloc(N_EDGES_GAP * sizeof(PackedEdge));
+        for (int e = 0; e < N_EDGES_GAP; e++) {
+            g_gap[e].src = gap_edges[e].src;
+            g_gap[e].dst = gap_edges[e].dst;
+            g_gap[e].w = K_GAP;
         }
         tables_ready = true;
     }
@@ -96,9 +141,9 @@ void brain_step(Brain* b) {
 
         // sigmoid transfer with bias: rest (J=0) -> sigmoid(-bias)
         float x = G * J - bias;
-        float sig = 1.0f / (1.0f + expf(-x));
+        float sig = fast_sigmoid(x);
         float tau = tau_ms[i];
-        b->a[i] += (sig - b->a[i]) / tau;       // Euler, dt = 1 ms
+        b->a[i] += (sig - b->a[i]) * ((float)BRAIN_DT_MS / tau);  // Euler
     }
 
     // 2) deliver synapses ---------------------------------------------------
@@ -109,16 +154,18 @@ void brain_step(Brain* b) {
     // instead of all-or-nothing saturation.
     const float* a = b->a;
     float* J_in = b->J_in;
+    const PackedEdge* chem = g_chem;
+    const float am = a_mean;
     for (int e = 0; e < N_EDGES_CHEM; e++) {
-        const SynEdge* ed = &chem_edges[e];
-        float act = a[ed->src] - a_mean;
-        if (act > 0.02f || act < -0.02f) J_in[ed->dst] += chem_w[e] * act;
+        const PackedEdge* ed = &chem[e];
+        J_in[ed->dst] += ed->w * (a[ed->src] - am);
     }
 
     // gap junctions: electrical coupling on the activity difference
+    const PackedEdge* gap = g_gap;
     for (int e = 0; e < N_EDGES_GAP; e++) {
-        const SynEdge* ed = &gap_edges[e];
-        float diff = (a[ed->dst] - a[ed->src]) * K_GAP;
+        const PackedEdge* ed = &gap[e];
+        float diff = (a[ed->dst] - a[ed->src]) * ed->w;
         J_in[ed->src] += diff;
         J_in[ed->dst] -= diff;
     }

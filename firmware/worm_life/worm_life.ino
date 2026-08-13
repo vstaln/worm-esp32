@@ -17,8 +17,8 @@ static TaskHandle_t brainTaskH, renderTaskH;
 static void brain_task(void*) {
     TickType_t last = xTaskGetTickCount();
     for (;;) {
-        world_step();                          // 1 ms of life
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(1));
+        world_step();                          // BRAIN_DT_MS ms of life
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(BRAIN_DT_MS));
     }
 }
 
@@ -33,10 +33,10 @@ static void render_task(void*) {
             const Worm* w = &g_world.worms[0];
             Serial.printf(
                 "t=%.0fs worm0: x=%.0f y=%.0f h=%.2f spd=%.1f hungry=%.0f age=%.0f/%.0f "
-                "food=%d eggs=%d brains_us=%.0f\n",
+                "food=%d eggs=%d brains_us=%lu\n",
                 g_world.sim_time, w->x, w->y, w->heading, w->speed, w->hunger,
                 w->age, w->lifespan, g_world.n_food, g_world.n_eggs,
-                brain_last_step_us());
+                (unsigned long)brain_last_step_us());
         }
         vTaskDelay(pdMS_TO_TICKS(40));         // 25 fps
     }

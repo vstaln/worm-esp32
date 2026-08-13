@@ -325,7 +325,7 @@ static void world_background(float dt) {
 }
 
 void world_step(void) {
-    const float dt = 0.001f;              // 1 ms
+    const float dt = 0.001f * (float)BRAIN_DT_MS;   // e.g. 2 ms
 
     for (int i = 0; i < g_world.n_worms; i++) {
         Worm* w = &g_world.worms[i];

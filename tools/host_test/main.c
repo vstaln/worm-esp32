@@ -108,7 +108,8 @@ static void trace(long steps) {
 
     int report_every = (int)(steps / 20);
     if (report_every < 1) report_every = 1;
-    printf("=== worm life host test: %ld ms (%ld s) ===\n", steps, steps / 1000);
+    printf("=== worm life host test: %ld ms (%ld s) ===\n", steps * BRAIN_DT_MS,
+           steps * BRAIN_DT_MS / 1000);
 
     for (long t = 0; t < steps; t++) {
         world_step();
@@ -118,7 +119,7 @@ static void trace(long steps) {
                 "t=%5ldms  worm: x=%6.1f y=%6.1f h=%5.2f spd=%5.1f hungry=%4.0f "
                 "age=%4.0f food=%d eggs=%d | ASEL=%5.2f AVA=%5.2f AVB=%5.2f "
                 "HSN=%5.2f MC=%5.2f | body=%4.1f phar=%4.1f | dbg: st=%.2f tu=%.2f nz=%.2f dr=%.2f\n",
-                t, w->x, w->y, w->heading, w->speed, w->hunger, w->age,
+                t * BRAIN_DT_MS, w->x, w->y, w->heading, w->speed, w->hunger, w->age,
                 g_world.n_food, g_world.n_eggs,
                 brain_rate(&w->brain, idx_ase), brain_rate(&w->brain, idx_ava),
                 brain_rate(&w->brain, idx_avb), brain_rate(&w->brain, idx_hsn),
