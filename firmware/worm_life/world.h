@@ -8,12 +8,12 @@
 
 #include "brain.h"
 
-#define WORLD_W 128
-#define WORLD_H 56
+#define WORLD_W 256
+#define WORLD_H 128
 
-#define MAX_FOOD     4
+#define MAX_FOOD     6
 #define MAX_EGGS     8
-#define MAX_WORMS    2            // CPU-limited: each worm runs its own brain at 250 Hz
+#define MAX_WORMS    1            // one worm at a time: eggs hatch only after it dies
 #define FOOD_AMOUNT 60.0f
 
 // ---- worm ----------------------------------------------------------------

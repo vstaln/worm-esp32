@@ -207,14 +207,16 @@ static void drive_body(Worm* w, float dt) {
     w->x += w->speed * cosf(w->heading) * dt;
     w->y += w->speed * sinf(w->heading) * dt;
 
-    // wrap around the arena edges
-    if (w->x < -4) w->x = WORLD_W + 4;
-    if (w->x > WORLD_W + 4) w->x = -4;
-    if (w->y < -4) w->y = WORLD_H + 4;
-    if (w->y > WORLD_H + 4) w->y = -4;
+    // bounce off the arena edges (camera-follow world: no wrapping, so the
+    // worm stays reachable and the camera never has to chase a teleport)
+    const float margin = 8.0f;
+    if (w->x < margin) { w->x = margin; w->heading = 3.14159265f - w->heading + (frandf() - 0.5f) * 0.6f; }
+    else if (w->x > WORLD_W - margin) { w->x = WORLD_W - margin; w->heading = 3.14159265f - w->heading + (frandf() - 0.5f) * 0.6f; }
+    if (w->y < margin) { w->y = margin; w->heading = -w->heading + (frandf() - 0.5f) * 0.6f; }
+    else if (w->y > WORLD_H - margin) { w->y = WORLD_H - margin; w->heading = -w->heading + (frandf() - 0.5f) * 0.6f; }
 
     // body wave: phase advances with forward speed, reverses when backing up
-    float wave_speed = 0.10f + 0.004f * fabsf(w->speed);    w->body_phase += wave_speed * (drive >= -0.05f ? 1.0f : -1.0f);
+    float wave_speed = 1.2f + 0.12f * fabsf(w->speed);    w->body_phase += wave_speed * (drive >= -0.05f ? 1.0f : -1.0f);
 }
 
 // ---- eating / life cycle -------------------------------------------------

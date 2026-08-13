@@ -2,3 +2,6 @@
 *.elf
 *.map
 firmware/worm_life/build/
+build/i2c_hunt/
+build/i2c_scan/
+build/wirecheck/
