@@ -1,14 +1,18 @@
-// brain.h — one C. elegans 302-neuron connectome running as Izhikevich spiking
-// neurons, plus graded (non-spiking) muscle cells. Each worm owns one Brain
-// instance; the simulation advances it once per millisecond.
+// brain.h — one C. elegans nervous system running as GRADED neurons over the
+// full 302-neuron connectome. Each worm owns one Brain instance; the
+// simulation advances it once per millisecond.
 //
-// Model choices (stylised, not electrophysiology):
-//   * Izhikevich RS (excitatory) / FS (inhibitory) parameters
-//   * chemical synapses: weight = raw synapse count * K_CHEM * sign, delivered
-//     to the postsynaptic neuron on the ms AFTER the presynaptic spike
-//   * gap junctions: bidirectional electrical coupling using membrane potential
-//   * muscles: graded low-pass integrators of synaptic input (no spikes); they
-//     still participate in gap junctions via their "potential"
+// Model (stylised but biologically motivated):
+//   * Real C. elegans neurons are mostly NON-SPIKING: they use graded
+//     potentials. We model each neuron's activity a in [0,1] with
+//       tau * da/dt = -a + sigmoid( G * (J + tonic) - bias )
+//     where J is the total input current (chemical synapses, gap junctions,
+//     injected sensor drive, noise).
+//   * chemical synapses: fan-in normalised so each neuron's total incoming
+//     strength is comparable; sign from the presynaptic neurotransmitter
+//     (GABAergic -> inhibitory).
+//   * gap junctions: electrical coupling on the activity difference.
+//   * muscles: the same graded integrator with a shorter time constant.
 #pragma once
 
 #include <stdbool.h>
@@ -16,37 +20,37 @@
 #include "connectome.h"
 
 // ---- tunables ------------------------------------------------------------
-#define K_CHEM      0.020f   // chemical weight scale (count -> current)
-#define K_GAP       0.012f   // gap junction coupling scale
-#define NOISE_AMP   0.60f    // uniform noise on every neuron each ms
-#define SENS_NOISE  1.50f    // extra noise on sensory neurons
+#define K_GAP       0.05f    // gap junction coupling scale
+
+// Runtime-tunable brain parameters (set before brain_init; defaults inside).
+typedef struct {
+    float sigmoid_gain;   // G: sigmoid steepness
+    float tonic;          // background input to every neuron
+    float bias;           // subtracted from G*J (sets resting activity)
+    float noise_amp;      // uniform noise on neuron input, all neurons
+    float sens_noise;     // extra noise on sensory neurons
+    float tau_neuron;     // ms
+    float tau_muscle;     // ms
+} BrainParams;
+
+void brain_set_params(BrainParams p);
 
 // ---- a brain -------------------------------------------------------------
-// Parameter arrays (a,b,c,d), sign and muscle flags depend only on the node
-// table, so they are shared; the per-brain state below is what makes each
-// worm's nervous system independent.
 typedef struct {
-    float v[N_NODES];       // membrane potential / muscle activity
-    float u[N_NODES];       // Izhikevich recovery variable
-    float I_in[N_NODES];    // current to integrate this ms
-    float rate[N_NODES];    // smoothed firing rate
-    uint8_t spike[N_NODES];
+    float a[N_NODES];       // activity 0..1 (neurons and muscles)
+    float J_in[N_NODES];    // input current to integrate this ms
     uint32_t rng;
+    uint32_t last_step_us;  // esp_timer us spent in the most recent step
 } Brain;
-
-extern float BRAIN_A[N_NODES], BRAIN_B[N_NODES];
-extern float BRAIN_C[N_NODES], BRAIN_D[N_NODES];
-extern int8_t BRAIN_SIGN[N_NODES];
-extern bool BRAIN_IS_MUSCLE[N_NODES];
 
 void brain_init(Brain* b, uint32_t seed);
 void brain_step(Brain* b);                       // advance one ms
+uint32_t brain_last_step_us(void);               // us in most recent step
 void brain_inject(Brain* b, int node, float amp);
-float brain_rate(const Brain* b, int node);      // smoothed firing rate
-float brain_v(const Brain* b, int node);         // potential / activity
-float brain_last_step_us(void);                  // diagnostic
+float brain_rate(const Brain* b, int node);      // == activity
+float brain_v(const Brain* b, int node);         // alias of rate
 
-// group readouts (average activity of a muscle class)
+// group readouts (average activity of a class, 0..1)
 float brain_body_wall_activity(const Brain* b);
 float brain_pharyngeal_activity(const Brain* b);
 float brain_vulval_activity(const Brain* b);

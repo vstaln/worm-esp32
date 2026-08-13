@@ -11,10 +11,10 @@
 #define WORLD_W 128
 #define WORLD_H 56
 
-#define MAX_FOOD     6
-#define MAX_EGGS    14
+#define MAX_FOOD     4
+#define MAX_EGGS     8
 #define MAX_WORMS    2            // CPU-limited: each worm runs its own brain at 1 kHz
-#define FOOD_AMOUNT 100.0f
+#define FOOD_AMOUNT 60.0f
 
 // ---- worm ----------------------------------------------------------------
 typedef struct {
@@ -23,6 +23,11 @@ typedef struct {
     float heading;       // radians
     float body_phase;    // travelling wave phase
     float speed;         // px/s along heading (+forward, -backward)
+    float fwd_act, bwd_act;   // smoothed command-neuron drive (EMA)
+    float conc_smooth;   // smoothed odour at head (~200 ms window)
+    float pirouette_t;   // seconds remaining in reversal
+    float pirouette_cd;  // cooldown between reversals
+    float dbg_steer, dbg_turn, dbg_noise, dbg_drive;
     float hunger;        // 0 = starving, 100 = full
     float age;           // seconds
     float lifespan;      // seconds (randomised at birth)
@@ -62,7 +67,9 @@ void world_step(void);
 float world_conc(float x, float y);
 
 // ---- tunables ------------------------------------------------------------
-#define BASE_SPEED   22.0f   // px/s at full forward drive
-#define TURN_GAIN    2.6f    // rad/s per unit turn drive
-#define STEER_GAIN   0.35f   // rad/s per unit (L-R) odour difference
-#define REV_TURN     4.2f    // extra turning while reversing
+#define BASE_SPEED   26.0f   // px/s at full forward drive
+#define TURN_GAIN    0.15f   // rad/s per unit turn drive (subtle exploration)
+#define STEER_GAIN   1.3f    // rad/s per unit (L-R) odour difference
+#define REV_TURN     2.2f    // extra turning while reversing
+#define SENS_ANG     0.6f    // sensor cone half-angle from heading (rad)
+#define SENS_DIST    6.0f    // sensor distance ahead of head (px)

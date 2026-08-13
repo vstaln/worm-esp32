@@ -20,7 +20,7 @@ static int N_AVBL, N_AVBR, N_PVCL, N_PVCR;                   // forward command
 static int N_AVAL, N_AVAR, N_AVDL, N_AVDR, N_AVEL, N_AVER;   // backward command
 static int N_RIML, N_RIMR, N_RIVL, N_RIVR;                   // turns
 static int N_HSNL, N_HSNR;                                   // egg laying
-static int N_MC;                                             // pharynx pacemaker
+static int N_NSML, N_NSMR, N_M4, N_M1, N_M5;                 // pharynx (pump)
 
 // ---- odour field ---------------------------------------------------------
 float world_conc(float x, float y) {
@@ -40,7 +40,7 @@ static void spawn_food(void) {
     Food* f = &g_world.food[g_world.n_food++];
     f->x = 12 + frandf() * (WORLD_W - 24);
     f->y = 8 + frandf() * (WORLD_H - 16);
-    f->radius = 3.5f + frandf() * 3.5f;
+    f->radius = 3.0f + frandf() * 3.0f;
     f->amount = FOOD_AMOUNT * (0.6f + frandf() * 0.8f);
     f->grow = 0.4f;
 }
@@ -53,6 +53,9 @@ static void birth_worm(Worm* w) {
     w->heading = frandf() * 6.2832f;
     w->body_phase = 0.0f;
     w->speed = 0.0f;
+    w->fwd_act = w->bwd_act = 0.0f;
+    w->conc_smooth = 0.0f;
+    w->pirouette_t = w->pirouette_cd = 0.0f;
     w->hunger = 45 + frandf() * 30;       // born hungry
     w->age = 0.0f;
     w->lifespan = 150 + frandf() * 150;   // 2.5 - 5 minutes of worm life
@@ -77,7 +80,10 @@ void world_init(void) {
     N_RIML = node_index_by_name("RIML"); N_RIMR = node_index_by_name("RIMR");
     N_RIVL = node_index_by_name("RIVL"); N_RIVR = node_index_by_name("RIVR");
     N_HSNL = node_index_by_name("HSNL"); N_HSNR = node_index_by_name("HSNR");
-    N_MC   = node_index_by_name("MC");
+    N_NSML = node_index_by_name("NSML"); N_NSMR = node_index_by_name("NSMR");
+    N_M4   = node_index_by_name("M4");
+    N_M1   = node_index_by_name("M1");
+    N_M5   = node_index_by_name("M5");
 
     for (int i = 0; i < 3; i++) spawn_food();
     g_world.n_worms = 1;
@@ -91,15 +97,15 @@ static void sense_food(Worm* w) {
     if (w->dying) gain = 0.0f;
 
     float s = 5.0f;                       // sensor separation (px)
-    float lx = w->x + s * cosf(w->heading + 1.35f);
-    float ly = w->y + s * sinf(w->heading + 1.35f);
-    float rx = w->x + s * cosf(w->heading - 1.35f);
-    float ry = w->y + s * sinf(w->heading - 1.35f);
+    float lx = w->x + s * cosf(w->heading + SENS_ANG);
+    float ly = w->y + s * sinf(w->heading + SENS_ANG);
+    float rx = w->x + s * cosf(w->heading - SENS_ANG);
+    float ry = w->y + s * sinf(w->heading - SENS_ANG);
     float cl = world_conc(lx, ly);
     float cr = world_conc(rx, ry);
     float c0 = world_conc(w->x, w->y);
 
-    float k = 0.9f * gain;                // current per conc unit
+    float k = 0.020f * gain;              // current per conc unit (graded J)
     brain_inject(&w->brain, N_ASEL, cl * k);
     brain_inject(&w->brain, N_ASER, cr * k);
     brain_inject(&w->brain, N_AWCL, c0 * k * 0.5f);
@@ -108,24 +114,55 @@ static void sense_food(Worm* w) {
     brain_inject(&w->brain, N_ASHL, 0.5f + 0.3f * sinf(g_world.sim_time * 0.13f));
     brain_inject(&w->brain, N_ASHR, 0.5f + 0.3f * sinf(g_world.sim_time * 0.11f));
 
-    // food present at mouth -> drive pharyngeal pumping (MC is the pacemaker)
+    // food present at mouth -> pharyngeal pumping. NSM is the serotonergic
+    // food-in-pharynx sensor; M4/M1/M5 are the pump motor neurons that drive
+    // the pharyngeal muscles (the real eating circuit in this connectome).
     bool at_food = c0 > 2.0f;
-    brain_inject(&w->brain, N_MC,
-                 at_food ? (1.0f + 0.6f * sinf(g_world.sim_time * 6.0f)) : 0.0f);
+    float pump_drive = at_food ? 2.5f : 0.0f;
+    brain_inject(&w->brain, N_NSML, pump_drive * 0.8f);
+    brain_inject(&w->brain, N_NSMR, pump_drive * 0.8f);
+    brain_inject(&w->brain, N_M4, pump_drive);
+    brain_inject(&w->brain, N_M1, pump_drive * 0.6f);
+    brain_inject(&w->brain, N_M5, pump_drive * 0.6f);
 }
 
 // ---- motor readout -------------------------------------------------------
 static void drive_body(Worm* w, float dt) {
     Brain* b = &w->brain;
-    float fwd = brain_rate(b, N_AVBL) + brain_rate(b, N_AVBR)
-              + brain_rate(b, N_PVCL) + brain_rate(b, N_PVCR);
-    float bwd = brain_rate(b, N_AVAL) + brain_rate(b, N_AVAR)
-              + brain_rate(b, N_AVDL) + brain_rate(b, N_AVDR)
-              + brain_rate(b, N_AVEL) + brain_rate(b, N_AVER);
-    float turn = brain_rate(b, N_RIML) + brain_rate(b, N_RIMR)
-               + brain_rate(b, N_RIVL) + brain_rate(b, N_RIVR);
+    // mean activity of the command populations (0..1 each)
+    float fwd = 0.25f * (brain_rate(b, N_AVBL) + brain_rate(b, N_AVBR)
+                       + brain_rate(b, N_PVCL) + brain_rate(b, N_PVCR));
+    float bwd = (1.0f / 6.0f) * (brain_rate(b, N_AVAL) + brain_rate(b, N_AVAR)
+                               + brain_rate(b, N_AVDL) + brain_rate(b, N_AVDR)
+                               + brain_rate(b, N_AVEL) + brain_rate(b, N_AVER));
+    float turn = 0.25f * (brain_rate(b, N_RIML) + brain_rate(b, N_RIMR)
+                        + brain_rate(b, N_RIVL) + brain_rate(b, N_RIVR));
 
-    float drive = fwd - bwd;
+    // behavioural-state smoothing: ~140 ms EMA so the worm runs in sustained
+    // bouts instead of jittering at the 1 ms time scale
+    w->fwd_act += (fwd - w->fwd_act) * 0.007f;
+    w->bwd_act += (bwd - w->bwd_act) * 0.007f;
+    float drive = w->fwd_act - w->bwd_act;   // in [-1, 1]
+
+    // hunger bias: starving worms search forward, full worms drift
+    float hunger_bias = 1.0f - w->hunger / 100.0f;
+    drive += 0.55f * hunger_bias - 0.05f;
+
+    // pirouette: when the odour at the head drops relative to its recent level,
+    // the real worm stops and reverses, then tries a new direction
+    float conc_now = world_conc(w->x, w->y);
+    w->conc_smooth += (conc_now - w->conc_smooth) * 0.005f;   // ~200 ms window
+    if (w->pirouette_t > 0.0f) {
+        w->pirouette_t -= dt;
+        drive = -0.75f;
+    } else {
+        if (w->hunger < 80.0f && conc_now < w->conc_smooth * 0.90f &&
+            w->pirouette_cd <= 0.0f && w->conc_smooth > 1.0f) {
+            w->pirouette_t = 0.35f + frandf() * 0.4f;
+            w->pirouette_cd = 2.5f + frandf() * 3.0f;
+        }
+    }
+    if (w->pirouette_cd > 0.0f) w->pirouette_cd -= dt;
     if (drive > 1.0f) drive = 1.0f;
     if (drive < -1.0f) drive = -1.0f;
 
@@ -134,21 +171,39 @@ static void drive_body(Worm* w, float dt) {
     if (vigour < 0.3f) vigour = 0.3f;
     if (w->dying) vigour = 0.0f;
 
-    // steering: head-sensor differential (weathervane) + RIM/RIV turn drive
-    float s = 5.0f;
-    float lx = w->x + s * cosf(w->heading + 1.35f);
-    float ly = w->y + s * sinf(w->heading + 1.35f);
-    float rx = w->x + s * cosf(w->heading - 1.35f);
-    float ry = w->y + s * sinf(w->heading - 1.35f);
-    float steer = (world_conc(lx, ly) - world_conc(rx, ry)) * STEER_GAIN;
+    // steering: RELATIVE head-sensor differential (scale-invariant weathervane)
+    float s = SENS_DIST;
+    float lx = w->x + s * cosf(w->heading + SENS_ANG);
+    float ly = w->y + s * sinf(w->heading + SENS_ANG);
+    float rx = w->x + s * cosf(w->heading - SENS_ANG);
+    float ry = w->y + s * sinf(w->heading - SENS_ANG);
+    float cl = world_conc(lx, ly), cr = world_conc(rx, ry);
+    float rel = (cl - cr) / (cl + cr + 2.0f);   // ~ -1..1, scale-free
+    if (rel > 1.0f) rel = 1.0f;
+    if (rel < -1.0f) rel = -1.0f;
+    float steer = rel * STEER_GAIN;
     float rev_turn = (drive < -0.15f) ? REV_TURN * turn : TURN_GAIN * turn;
 
     // satiated worms wander: sensory steering fades out
     float wander = 0.5f + 0.5f * (w->hunger / 100.0f);
-    float noise_turn = (frandf() - 0.5f) * 0.8f * wander;
+    float noise_turn = (frandf() - 0.5f) * 0.6f * wander;
+    // exploration drive: full worms cruise off to roam; hunger drives search
+    drive += 0.35f * (w->hunger / 100.0f);
+    if (drive > 1.0f) drive = 1.0f;
+    if (drive < -1.0f) drive = -1.0f;
 
     w->heading += (steer * (1.0f - 0.7f * wander) + rev_turn + noise_turn) * dt;
-    w->speed = drive * BASE_SPEED * vigour;
+    // hungry worms move faster (active search); a HUNGRY worm slows and
+    // settles to eat (real "dwelling" behaviour)
+    float vigour2 = 0.55f + 0.60f * (1.0f - w->hunger / 100.0f);
+    bool on_food = world_conc(w->x, w->y) > 2.0f;
+    if (on_food && w->hunger < 85.0f) vigour2 *= 0.35f;  // dwell to eat
+    w->speed = drive * BASE_SPEED * vigour * vigour2;
+    // debug: expose components
+    w->dbg_steer = steer * (1.0f - 0.7f * wander);
+    w->dbg_turn = rev_turn;
+    w->dbg_noise = noise_turn;
+    w->dbg_drive = drive;
     w->x += w->speed * cosf(w->heading) * dt;
     w->y += w->speed * sinf(w->heading) * dt;
 
@@ -159,18 +214,17 @@ static void drive_body(Worm* w, float dt) {
     if (w->y > WORLD_H + 4) w->y = -4;
 
     // body wave: phase advances with forward speed, reverses when backing up
-    float wave_speed = 0.10f + 0.004f * fabsf(w->speed);
-    w->body_phase += wave_speed * (drive >= -0.05f ? 1.0f : -1.0f);
+    float wave_speed = 0.10f + 0.004f * fabsf(w->speed);    w->body_phase += wave_speed * (drive >= -0.05f ? 1.0f : -1.0f);
 }
 
 // ---- eating / life cycle -------------------------------------------------
 static void live_worm(Worm* w, float dt) {
     float c0 = world_conc(w->x, w->y);
     float phar = brain_pharyngeal_activity(&w->brain);
-    float pump = (c0 > 2.0f && phar > 0.5f) ? phar : 0.0f;
+    float pump = (c0 > 2.0f && phar > 0.35f) ? phar : 0.0f;
 
     // eat: pumping converts food into hunger
-    w->hunger += 9.0f * pump * dt;
+    w->hunger += 12.0f * pump * dt;
     if (w->hunger > 100.0f) w->hunger = 100.0f;
 
     // deplete the food patch under the mouth
@@ -178,7 +232,7 @@ static void live_worm(Worm* w, float dt) {
         Food* f = &g_world.food[i];
         float dx = w->x - f->x, dy = w->y - f->y;
         if (dx * dx + dy * dy < (f->radius * 0.8f) * (f->radius * 0.8f)) {
-            f->amount -= 14.0f * pump * dt;
+            f->amount -= 18.0f * pump * dt;
             if (f->amount <= 0.0f) {     // patch exhausted
                 // swap-remove, then a new patch appears elsewhere
                 g_world.food[i] = g_world.food[g_world.n_food - 1];
@@ -190,7 +244,7 @@ static void live_worm(Worm* w, float dt) {
     }
 
     // metabolism
-    w->hunger -= 1.3f * dt;
+    w->hunger -= 2.0f * dt;   // metabolism: ~50 s from full to empty
     if (w->hunger < 0.0f) w->hunger = 0.0f;
 
     // age / starvation
