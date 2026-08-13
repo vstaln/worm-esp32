@@ -13,7 +13,7 @@
 
 #define MAX_FOOD     4
 #define MAX_EGGS     8
-#define MAX_WORMS    2            // CPU-limited: each worm runs its own brain at 1 kHz
+#define MAX_WORMS    2            // CPU-limited: each worm runs its own brain at 250 Hz
 #define FOOD_AMOUNT 60.0f
 
 // ---- worm ----------------------------------------------------------------

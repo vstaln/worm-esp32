@@ -1,7 +1,7 @@
 // worm_life.ino — a living C. elegans on an ESP32 + 128x64 OLED.
 //
 // The worm's real 302-neuron connectome (Cook et al. 2019) runs as Izhikevich
-// spiking neurons at 1 kHz on core 0; the OLED renderer runs at ~25 fps on
+// spiking neurons at 250 Hz on core 0; the OLED renderer runs at ~25 fps on
 // core 1. Worms hunt food by chemotaxis (ASE sensory neurons), get hungry,
 // eat (pharyngeal pumping), lay eggs (HSN), age, die and are reborn.
 //

@@ -2,7 +2,7 @@
 // The hot loops below dominate the whole simulation's CPU budget; force
 // aggressive optimisation on THIS translation unit only (the rest of the
 // sketch stays at the platform default), so builds stay fast.
-#pragma GCC optimize("O2", "fast")
+#pragma GCC optimize("O2", "fast-math")
 
 #include "brain.h"
 

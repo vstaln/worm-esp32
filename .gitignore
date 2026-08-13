@@ -1,3 +1,4 @@
 *.o
 *.elf
 *.map
+firmware/worm_life/build/
