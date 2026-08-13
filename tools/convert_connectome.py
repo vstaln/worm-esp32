@@ -41,6 +41,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw"
 INC = ROOT / "include"
+# the Arduino sketch compiles .c/.h from its own folder; keep a generated copy there
+SKETCH_SRC = ROOT / "firmware" / "worm_life"
 
 BASE = "https://raw.githubusercontent.com/openworm/c302/master/c302/data/"
 FILES = {
@@ -281,6 +283,13 @@ def main() -> None:
         for fn in FILES.values():
             (RAW / fn).unlink(missing_ok=True)
         RAW.rmdir() if not list(RAW.iterdir()) else None
+
+    # mirror generated C into the sketch build tree
+    SKETCH_SRC.mkdir(parents=True, exist_ok=True)
+    for fn in ("connectome.h", "connectome_data.c"):
+        data = (INC / fn).read_text()
+        (SKETCH_SRC / fn).write_text(data)
+        print(f"  mirrored -> firmware/worm_life/{fn}")
 
     print("== done ==")
 
