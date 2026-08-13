@@ -1,0 +1,4 @@
+# arduino-cli artifacts
+firmware/build/
+*.bin
+*.elf
